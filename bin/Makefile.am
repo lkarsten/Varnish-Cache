@@ -11,4 +11,5 @@ SUBDIRS = \
 	varnishncsa \
 	varnishstat \
 	varnishtest \
-	varnishtop
+	varnishtop \
+	varnishinflux
