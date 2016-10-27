@@ -6,6 +6,15 @@ AM_CPPFLAGS = \
 	-I$(top_builddir)/bin/varnishd \
 	-I$(top_builddir)/include
 
+bin_PROGRAMS = esitest
+esitest_SOURCES = \
+	cache/esitest.c \
+	../../lib/libvarnish/vas.c \
+	../../lib/libvarnish/vsb.c \
+	../../lib/libvarnish/vct.c \
+	../../lib/libvgz/crc32.c \
+	cache/cache_esi_parse.c
+
 sbin_PROGRAMS = varnishd
 
 varnishd_SOURCES = \

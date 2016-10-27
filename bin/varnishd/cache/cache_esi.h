@@ -42,7 +42,10 @@
 typedef ssize_t vep_callback_t(struct vfp_ctx *, void *priv, ssize_t l,
     enum vgz_flag flg);
 
+struct vep_state *Fake_VEP_Init(void);
 struct vep_state *VEP_Init(struct vfp_ctx *vc, const struct http *req,
     vep_callback_t *cb, void *cb_priv);
 void VEP_Parse(struct vep_state *, const char *p, size_t l);
 struct vsb *VEP_Finish(struct vep_state *);
+
+

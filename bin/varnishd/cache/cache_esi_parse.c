@@ -998,6 +998,71 @@ vep_default_cb(struct vfp_ctx *vc, void *priv, ssize_t l, enum vgz_flag flg)
 /*---------------------------------------------------------------------
  */
 
+#define __TESTRUNNER 1
+
+#ifdef __TESTRUNNER
+
+static ssize_t __match_proto__(vep_callback_t)
+vep_noop_cb(struct vfp_ctx *vc, void *priv, ssize_t l, enum vgz_flag flg)
+{
+	ssize_t *s;
+
+	AN(priv);
+	s = priv;
+	*s += l;
+	(void)flg;
+	(void)vc;
+	return (*s);
+}
+
+struct http *http_create(void *p, uint16_t nhttp);
+
+struct http *
+http_create(void *p, uint16_t nhttp)
+{
+        struct http *hp;
+
+        hp = p;
+        hp->magic = HTTP_MAGIC;
+        hp->hd = (void*)(hp + 1);
+        hp->shd = nhttp;
+        hp->hdf = (void*)(hp->hd + nhttp);
+        return (hp);
+}
+
+#include <malloc.h>
+struct vep_state *
+Fake_VEP_Init(void)
+{
+        struct vep_state *vep = NULL;
+
+        ALLOC_OBJ(vep, VEP_MAGIC);
+
+        vep->vsb = VSB_new_auto();
+        vep->url = strdup("/");
+
+        vep->state = VEP_START;
+        vep->crc = crc32(0L, Z_NULL, 0);
+        vep->crcp = crc32(0L, Z_NULL, 0);
+        vep->startup = 1;
+
+	vep->cb = vep_noop_cb;
+	vep->cb_priv = http_create(malloc(sizeof(struct req)*2), 10);  /* this is not smart */
+
+	struct vfp_ctx *vc;
+	ALLOC_OBJ(vc, VFP_CTX_MAGIC);
+	vep->vc = vc;
+
+	struct worker *wrk;
+	ALLOC_OBJ(wrk, WORKER_MAGIC);
+	vep->vc->wrk = wrk;
+	vep->vc->wrk->vsl = NULL;
+
+        return(vep);
+}
+
+#endif /*__TESTRUNNER */
+
 struct vep_state *
 VEP_Init(struct vfp_ctx *vc, const struct http *req, vep_callback_t *cb,
     void *cb_priv)
