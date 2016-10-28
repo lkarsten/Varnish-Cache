@@ -12,4 +12,4 @@ SUBDIRS = \
 	varnishstat \
 	varnishtest \
 	varnishtop \
-	varnishinflux
+	influxdb

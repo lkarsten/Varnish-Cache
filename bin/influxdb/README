@@ -1,0 +1,16 @@
+
+
+InfluxDB export for Varnish Cache
+=================================
+
+
+We should:
+1) be able to export VSC counters every second or so. (beware of MTU with many backends)
+
+- influxstat.c
+
+2) ReqAcct for (client) requests matching a filter. Request rate, time spent, so on.
+
+influxlog.c?
+how to filter?
+

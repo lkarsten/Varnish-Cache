@@ -641,6 +641,7 @@ AC_CONFIG_FILES([
     bin/varnishhist/Makefile
     bin/varnishtest/Makefile
     bin/varnishncsa/Makefile
+    bin/influxdb/Makefile
     doc/Makefile
     doc/graphviz/Makefile
     doc/sphinx/Makefile

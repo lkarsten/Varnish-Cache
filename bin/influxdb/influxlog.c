@@ -1,8 +1,8 @@
 /*-
- * Copyright (c) 2015 Varnish Software AS
+ * Copyright (c) 2016 Varnish Software
  * All rights reserved.
  *
- * Author: Lasse Karstensen <lkarsten@varnish-software.com>
+ * Author: Lasse Karstensen <lasse.karstensen@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,7 +25,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * InfluxDB data feed for Varnish Cache.
+ * Export VSC ("varnishstat") to InfluxDB over UDP.
  */
 
 #include "config.h"
@@ -58,11 +58,6 @@
 
 static const char progname[] = "varnishinflux";
 
-static int hist_low;
-static int hist_high;
-static int hist_range;
-static int hist_buckets;
-
 static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static int end_of_file = 0;
@@ -76,60 +71,6 @@ static char *format;
 static int match_tag;
 
 static double log_ten;
-
-static int scales[] = {
-	1,
-	2,
-	3,
-	4,
-	5,
-	10,
-	15,
-	20,
-	25,
-	50,
-	100,
-	250,
-	500,
-	1000,
-	2500,
-	5000,
-	10000,
-	25000,
-	50000,
-	100000,
-	INT_MAX
-};
-
-struct profile {
-	const char *name;
-	enum VSL_tag_e tag;
-	const char *prefix;
-	int field;
-	int hist_low;
-	int hist_high;
-}
-profiles[] = {
-	{
-		.name = "responsetime",
-		.tag = SLT_Timestamp,
-		.prefix = "Process:",
-		.field = 3,
-		.hist_low = -6,
-		.hist_high = 3
-	}, {
-		.name = "size",
-		.tag = SLT_ReqAcct,
-		.prefix = NULL,
-		.field = 5,
-		.hist_low = 1,
-		.hist_high = 8
-	}, {
-		.name = 0,
-	}
-};
-
-static struct profile *active_profile;
 
 static void
 update(void)
@@ -288,70 +229,6 @@ accumulate(struct VSL_data *vsl, struct VSL_transaction * const pt[],
 	}
 	return (0);
 }
-
-static void *
-do_curses(void *arg)
-{
-	int ch;
-	(void)arg;
-
-	initscr();
-	raw();
-	noecho();
-	nonl();
-	intrflush(stdscr, FALSE);
-	curs_set(0);
-	erase();
-	for (;;) {
-		pthread_mutex_lock(&mtx);
-		update();
-		pthread_mutex_unlock(&mtx);
-
-		timeout(delay * 1000);
-		switch ((ch = getch())) {
-		case ERR:
-			break;
-#ifdef KEY_RESIZE
-		case KEY_RESIZE:
-			erase();
-			break;
-#endif
-		case '\014': /* Ctrl-L */
-		case '\024': /* Ctrl-T */
-			redrawwin(stdscr);
-			refresh();
-			break;
-		case '\032': /* Ctrl-Z */
-			endwin();
-			raise(SIGTSTP);
-			break;
-		case '\003': /* Ctrl-C */
-		case '\021': /* Ctrl-Q */
-		case 'Q':
-		case 'q':
-			raise(SIGINT);
-			endwin();
-			pthread_exit(NULL);
-		case '0':
-		case '1':
-		case '2':
-		case '3':
-		case '4':
-		case '5':
-		case '6':
-		case '7':
-		case '8':
-		case '9':
-			delay = 1 << (ch - '0');
-			break;
-		default:
-			beep();
-			break;
-		}
-	}
-	pthread_exit(NULL);
-}
-
 /*--------------------------------------------------------------------*/
 
 static void
@@ -359,7 +236,7 @@ usage(int status)
 {
 	const char **opt;
 
-	fprintf(stderr, "Usage: %s <options>\n\n", progname);
+	fprintf(stderr, "Usage: %s influxhost\n\n", progname);
 	fprintf(stderr, "Options:\n");
 	for (opt = vopt_usage; *opt != NULL; opt +=2)
 		fprintf(stderr, " %-25s %s\n", *opt, *(opt + 1));
@@ -371,7 +248,6 @@ main(int argc, char **argv)
 {
 	int i;
 	char *colon;
-	const char *profile = "responsetime";
 	pthread_t thr;
 	int fnum = -1;
 	struct profile cli_p = {0};
@@ -381,43 +257,6 @@ main(int argc, char **argv)
 	if (0)
 		(void)usage;
 
-	/* only client requests */
-	assert(VUT_Arg('c', NULL));
-	while ((i = getopt(argc, argv, vopt_optstring)) != -1) {
-		switch (i) {
-		case 'P':
-			colon = strchr(optarg, ':');
-			/* no colon, take the profile as a name*/
-			if (colon == NULL) {
-				profile = optarg;
-				break;
-			}
-			/* else it's a definition, we hope */
-			if (sscanf(colon+1, "%d:%d:%d",	&cli_p.field,
-				&cli_p.hist_low, &cli_p.hist_high) != 3) {
-				fprintf(stderr, "-P: '%s' is not a valid"
-				    " profile name or definition\n", optarg);
-				exit(1);
-			}
-
-			match_tag = VSL_Name2Tag(optarg, colon - optarg);
-			if (match_tag < 0) {
-				fprintf(stderr,
-				    "-P: '%s' is not a valid tag name\n",
-				    optarg);
-				exit(1);
-			}
-			cli_p.name = "custom";
-			cli_p.tag = match_tag;
-			profile = NULL;
-			active_profile = &cli_p;
-
-			break;
-		default:
-			if (!VUT_Arg(i, optarg))
-				usage(1);
-		}
-	}
 	/* Check for valid grouping mode */
 	assert(VUT.g_arg < VSL_g__MAX);
 	if (VUT.g_arg != VSL_g_vxid && VUT.g_arg != VSL_g_request)
