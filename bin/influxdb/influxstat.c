@@ -32,6 +32,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netdb.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -65,60 +66,70 @@
 
 #include "influxstat.h"
 
-// #include "influxlog_options.h"
+#define NANO 1000000000
 
 /* Global variables are the bestest. */
 int sock = -1;
 char hostname[64];
 
+struct vsb *msg;
+
 // char tags[] = "service=varnish"
 
 static int
-send_packet(const struct vsb *msg)
+send_message(void)
 {
-
-	fprintf(stderr, "%s\n", VSB_data(msg));
-	return(0);
-	// AN(sock);  /* global */
-//	int written = write(sock, VSB_data(msg), VSB_len(msg));
-//	return(written);
+	int written = write(sock, VSB_data(msg), VSB_len(msg));
+	if (written < 0) {
+		if (errno != 111) {  /* Ignore connection refused */
+			fprintf(stderr, "write error: (%i) %s\n", errno, strerror(errno));
+		}
+	}
+	fprintf(stderr, "[%i] %s\n", written, VSB_data(msg));
+	return(written);
 }
 
 static int
 do_influx_cb(void *priv, const struct VSC_point * const pt)
 {
 	char time_stamp[20];
+	(void)priv;
 
 	if (pt == NULL)
 		return (0);
 
-	(void)priv;
-	// struct vsb *msg = priv;
-	//
 	AZ(strcmp(pt->desc->ctype, "uint64_t"));
 	uint64_t val = *(const volatile uint64_t*)pt->ptr;
 
-	if (strcmp(pt->section->fantom->type, "VBE"))
-		/* Ignore backend counters for now. */
-		return(-1);
+	/* Ignore backend counters for now. */
+	// if (!strcmp(pt->section->fantom->type, "VBE"))
+	//	return(-1);
 		// printf("\t\t<ident>%s</ident>\n", sec->fantom->ident);
+
+	VSB_clear(msg);
 
 	time_t now = time(NULL);
 	(void)strftime(time_stamp, 20, "%Y-%m-%dT%H:%M:%S", localtime(&now));
 
-	struct vsb *msg = VSB_new_auto();
 	AN(msg);
 
-	VSB_printf(msg, "%s.%s", pt->section->fantom->ident, pt->desc->name);
+	if (pt->section->fantom->type[0])
+		VSB_printf(msg, "%s.%s", pt->section->fantom->type,
+		    pt->desc->name);
+	else if (pt->section->fantom->ident[0])
+		VSB_printf(msg, "%s.%s", pt->section->fantom->ident,
+		    pt->desc->name);
+	else
+		WRONG("Unknown field type");
 	VSB_printf(msg, ",hostname=%s", hostname);
 	VSB_cat(msg, ",service=varnish");
-	VSB_printf(msg, " value=%ju\n", (uintmax_t)val);
-
+	VSB_printf(msg, " value=%ju", (uintmax_t)val);
+	VSB_printf(msg, " %ju", time(NULL)*NANO);
 	VSB_finish(msg);
 
-	send_packet(msg);
+	send_message();
+	VTIM_sleep(0.001);  /* Smear the packet rate slightly */
 
-	VSB_delete(msg);
 	return (0);
 }
 
@@ -126,7 +137,7 @@ do_influx_cb(void *priv, const struct VSC_point * const pt)
 static void
 do_influx_udp(struct VSM_data *vd, const long interval)
 {
-	while (0) {
+	while (1) {
 		(void)VSC_Iter(vd, NULL, do_influx_cb, NULL);
 		VTIM_sleep(interval);
 	}
@@ -168,6 +179,50 @@ list_fields(struct VSM_data *vd)
 	(void)VSC_Iter(vd, NULL, do_list_cb, NULL);
 }
 
+
+static int
+create_socket(const char *host, const char *port)
+{
+	struct addrinfo hints, *result, *rp;
+	int sfd, s;
+
+        memset(&hints, 0, sizeof(struct addrinfo));
+
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_DGRAM;
+
+	if (getenv("NO_IPV6") == NULL)
+		hints.ai_family = AF_INET;
+
+        s = getaddrinfo(host, port, &hints, &result);
+        if (s != 0) {
+           fprintf(stderr, "ERROR: Unable to resolve: %s\n", gai_strerror(s));
+           exit(EXIT_FAILURE);
+        }
+
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		sfd = socket(rp->ai_family, rp->ai_socktype,
+		    rp->ai_protocol);
+		if (sfd == -1)
+		   continue;
+
+		if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1)
+		   break;                  /* Success */
+
+		close(sfd);
+	}
+	if (rp == NULL) {               /* No address succeeded */
+		fprintf(stderr, "ERROR: Could not create socket\n");
+		exit(EXIT_FAILURE);
+	}
+
+	freeaddrinfo(result);
+
+	return(sfd);
+}
+
+
+
 /*--------------------------------------------------------------------*/
 
 static void
@@ -176,7 +231,7 @@ usage(void)
 #define FMT "    %-28s # %s\n"
 	fprintf(stderr, "Usage: influxstat "
 	    "[lV] [-f field] [-t seconds|<off>] [-i seconds] "
-	    VSC_n_USAGE "\n");
+	    VSC_n_USAGE " hostname port\n");
 	fprintf(stderr, FMT, "-f field", "Field inclusion glob");
 	fprintf(stderr, FMT, "",
 	    "If it starts with '^' it is used as an exclusion list.");
@@ -264,27 +319,15 @@ main(int argc, char * const *argv)
 
 	AZ(gethostname(hostname, sizeof(hostname)));
 
-	/*
-	struct sockaddr *addr;
-	socklen_t addrlen;   
-	char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
+	msg = VSB_new(NULL, NULL, 2048, 0);
 
-	if (getnameinfo(addr, addrlen, hbuf, sizeof(hbuf), sbuf,
-	       sizeof(sbuf), NI_NUMERICHOST | NI_NUMERICSERV) == 0)
-	printf("host=%s, serv=%s\n", hbuf, sbuf);
+	if (optind != argc-2)
+		usage();
 
+	// fprintf(stderr, "Attempting to resolve %s:%s\n", argv[optind], argv[optind+1]);
 
-
-	int sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-	struct sockaddr dst;
-
-	int sock = socket(AF_INET, SOCK_DGRAM, 0);
-	sendto
-
-	connect(
-	int sock = socket(AF_INET, SOCK_DGRAM, 0);
-	*/
+	sock = create_socket(argv[optind], argv[optind+1]);
+	AN(sock);
 
 	do_influx_udp(vd, interval);
 	exit(0);
