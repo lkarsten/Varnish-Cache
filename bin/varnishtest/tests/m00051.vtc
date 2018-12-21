@@ -1,0 +1,29 @@
+varnishtest "Test std.now()"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import vtc;
+	import std;
+
+	sub vcl_recv {
+		set req.http.t0 = std.now();
+		vtc.sleep(0.3s);   # Some sort of curl/db callout can easily take 300ms.
+		set req.http.t1 = std.now();
+		set req.http.took = std.now() - std.real(req.http.t0, 0);
+	}
+
+	sub vcl_deliver {
+		set resp.http.took = req.http.took;
+	}
+} -start
+
+client c1 {
+	txreq
+	rxresp
+	expect resp.http.took > 0.25
+	expect resp.http.took < 0.4
+} -run

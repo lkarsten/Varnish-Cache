@@ -246,6 +246,13 @@ vmod_timestamp(VRT_CTX, VCL_STRING label)
 	}
 }
 
+VCL_REAL v_matchproto_(td_std_now)
+vmod_now(VRT_CTX)
+{
+	CHECK_OBJ_NOTNULL(ctx, VRT_CTX_MAGIC);
+	return VTIM_real();
+}
+
 VCL_BOOL v_matchproto_(td_std_cache_req_body)
 vmod_cache_req_body(VRT_CTX, VCL_BYTES size)
 {

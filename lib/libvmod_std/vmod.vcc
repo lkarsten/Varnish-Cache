@@ -256,6 +256,13 @@ Description
 Example
 	std.timestamp("curl-request");
 
+$Function REAL now()
+
+Description
+	TBD.
+Example
+	set req.http.foo = std.now();
+
 $Function STRING querysort(STRING)
 
 Description
